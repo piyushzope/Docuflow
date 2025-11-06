@@ -1,0 +1,56 @@
+name: auto-checkpoint
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  tag:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    # Only run on actual commits (not on workflow_dispatch without a commit)
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.sha)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create annotated checkpoint tag
+        id: create_tag
+        run: |
+          DATE=$(date -u +"%Y-%m-%d")
+          SHA=${GITHUB_SHA::7}
+          
+          # Get PR number from commit message if available (for squash merges)
+          PR_NUMBER=$(git log -1 --pretty=%B | grep -oP '\(#\K\d+' | head -1 || echo "")
+          
+          if [ -n "$PR_NUMBER" ]; then
+            TAG="checkpoint/${DATE}-merge-${SHA}-pr${PR_NUMBER}"
+            MESSAGE="Auto checkpoint for merge ${GITHUB_SHA} (PR #${PR_NUMBER})"
+          else
+            TAG="checkpoint/${DATE}-merge-${SHA}"
+            MESSAGE="Auto checkpoint for merge ${GITHUB_SHA}"
+          fi
+          
+          # Check if tag already exists
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists, skipping"
+            echo "tag_created=false" >> $GITHUB_OUTPUT
+          else
+            git tag -a "$TAG" -m "$MESSAGE"
+            git push origin "$TAG"
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "tag_created=true" >> $GITHUB_OUTPUT
+            echo "Created and pushed checkpoint tag: $TAG"
+          fi
+
+      - name: Output tag info
+        if: steps.create_tag.outputs.tag_created == 'true'
+        run: |
+          echo "✅ Checkpoint tag created: ${{ steps.create_tag.outputs.tag }}"
+          echo "View tag: https://github.com/${{ github.repository }}/releases/tag/${{ steps.create_tag.outputs.tag }}"
+
