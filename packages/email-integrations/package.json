@@ -1,0 +1,20 @@
+{
+  "name": "@docuflow/email-integrations",
+  "version": "1.0.0",
+  "description": "Email integration clients for Gmail and Outlook",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "googleapis": "^129.0.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

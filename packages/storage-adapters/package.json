@@ -1,0 +1,24 @@
+{
+  "name": "@docuflow/storage-adapters",
+  "version": "1.0.0",
+  "description": "Pluggable cloud storage adapters for Docuflow",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:coverage": "vitest --coverage"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "@azure/storage-blob": "^12.17.0",
+    "googleapis": "^129.0.0",
+    "@microsoft/microsoft-graph-client": "^3.0.7"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

@@ -1,0 +1,12 @@
+-- Add additional directory fields to profiles
+ALTER TABLE profiles
+  ADD COLUMN IF NOT EXISTS job_title TEXT,
+  ADD COLUMN IF NOT EXISTS department TEXT,
+  ADD COLUMN IF NOT EXISTS team TEXT,
+  ADD COLUMN IF NOT EXISTS phone TEXT,
+  ADD COLUMN IF NOT EXISTS avatar_url TEXT,
+  ADD COLUMN IF NOT EXISTS skills JSONB DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS bio TEXT,
+  ADD COLUMN IF NOT EXISTS location TEXT;
+
+

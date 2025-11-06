@@ -1,0 +1,32 @@
+{
+  "name": "docuflow",
+  "version": "1.0.0",
+  "description": "Document collection platform with email-driven automation",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=apps/web",
+    "build": "npm run build --workspace=apps/web",
+    "start": "npm run start --workspace=apps/web",
+    "lint": "npm run lint --workspace=apps/web",
+    "typecheck": "npm run typecheck --workspace=apps/web"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^14.3.1",
+    "@testing-library/user-event": "^14.6.1",
+    "@vitest/ui": "^1.6.1",
+    "dotenv": "^17.2.3",
+    "jsdom": "^23.2.0",
+    "tsx": "^4.20.6",
+    "vitest": "^1.6.1"
+  }
+}

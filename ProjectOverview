@@ -1,0 +1,50 @@
+📄 Company Vision: Streamlining Document Collection Through Email-Driven Automation
+Objective:
+We’re building a web platform that enables institutions to securely and efficiently collect documents from their users or employees—driven entirely by email workflows.
+Our mission is to eliminate the manual friction in document collection, verification, and storage by connecting institutional email accounts (e.g., Outlook, Gmail) with intelligent automation and cloud storage (e.g., OneDrive, Google Drive, SharePoint).
+ 
+🌐 Core Concept
+Institutions (schools, HR departments, financial firms, etc.) often request and receive documents via email—ID proofs, forms, reports, certificates, etc. These exchanges are typically unstructured, repetitive, and error-prone.
+Our web app acts as the automation layer between email communication and document storage.
+When an institution connects its email account, the platform automatically:
+1.	Tracks requests and responses sent to users or employees.
+2.	Parses incoming emails for attachments and metadata.
+3.	Organizes and stores documents in the right cloud storage location (e.g., per user, department, or project folder).
+4.	Maintains an audit trail of all document exchanges for compliance and tracking.
+ 
+🚀 Key Features (Initial MVP Scope)
+1.	Email Integration Layer
+o	Connect institutional email accounts (Outlook, Gmail, etc.) securely using OAuth.
+o	Automate email parsing to detect attachments and sender information.
+2.	Smart Document Routing
+o	Automatically classify and store documents based on sender, subject line, or pre-defined rules.
+o	Support storage options like OneDrive, Google Drive, SharePoint, and Azure Blob Storage.
+3.	Web Dashboard
+o	Allow institutions to create and track document requests.
+o	Show request status (e.g., “Pending,” “Received,” “Missing Files”).
+o	Enable rule creation for routing and folder organization.
+4.	Notifications and Tracking
+o	Automatic email follow-ups or reminders for pending submissions.
+o	Activity logs for auditing and compliance.
+5.	Security and Compliance
+o	Encryption for data in transit and at rest.
+o	Adherence to institutional security policies (e.g., Microsoft 365 compliance, GDPR).
+ 
+💡 Strategic Opportunities
+•	Universities & HR Departments: Streamline student/employee document collection.
+•	Financial & Legal Firms: Simplify client KYC or onboarding processes.
+•	Healthcare Institutions: Manage patient form collection securely.
+Long-term, we can expand into:
+•	Intelligent document recognition (OCR, AI classification).
+•	Automated verification workflows (e.g., flag expired IDs).
+•	Integration with e-signature tools (DocuSign, Adobe Sign).
+ 
+🎯 What We Need from the Team
+To move from concept to MVP, here’s how each function can start ideating:
+•	Engineering: Explore secure email integration (Graph API, Gmail API) and rule-based routing logic.
+•	Product Design: Sketch intuitive UX for managing document requests and visualizing collection progress.
+•	Operations: Define core user personas and compliance requirements.
+•	Marketing & Partnerships: Identify 2–3 pilot institutions or departments for beta testing.
+ 
+🧭 Our Goal
+To become the default document collection engine for institutions — as simple as email, as powerful as automation.

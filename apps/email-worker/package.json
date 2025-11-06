@@ -1,0 +1,25 @@
+{
+  "name": "@docuflow/email-worker",
+  "version": "1.0.0",
+  "description": "Background email processing worker for Docuflow",
+  "main": "./src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@docuflow/shared": "*",
+    "@docuflow/email-integrations": "*",
+    "@docuflow/storage-adapters": "*",
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "tsx": "^4.7.0"
+  }
+}
