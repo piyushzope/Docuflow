@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createEmailClient } from '@docuflow/email-integrations';
 import { decrypt } from '@docuflow/shared';
+import { createRequestSchema, normalizeRequestType } from '@/lib/validation/request-schemas';
 
 /**
  * Helper function to send email for a document request
@@ -166,6 +167,25 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
 
+    // Validate request body with Zod
+    const validationResult = createRequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      return NextResponse.json(
+        { 
+          error: 'Validation failed', 
+          details: validationResult.error.errors 
+        },
+        { status: 400 }
+      );
+    }
+
+    const validatedData = validationResult.data;
+
+    // Normalize request_type if provided
+    if (validatedData.request_type) {
+      validatedData.request_type = normalizeRequestType(validatedData.request_type) || validatedData.request_type;
+    }
+
     // Get user's organization
     const { data: profile } = await supabase
       .from('profiles')
@@ -178,10 +198,10 @@ export async function POST(request: NextRequest) {
     }
 
     // Support both single recipient and bulk recipients
-    const recipients = body.recipients && Array.isArray(body.recipients)
-      ? body.recipients
-      : body.recipient_email
-      ? [body.recipient_email]
+    const recipients = validatedData.recipients && Array.isArray(validatedData.recipients)
+      ? validatedData.recipients
+      : validatedData.recipient_email
+      ? [validatedData.recipient_email]
       : [];
 
     if (recipients.length === 0) {
@@ -189,7 +209,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get email account - use selected account or fallback to first active
-    let emailAccountId = body.email_account_id || null;
+    let emailAccountId = validatedData.email_account_id || null;
     if (!emailAccountId) {
       const { data: emailAccount } = await supabase
         .from('email_accounts')
@@ -202,12 +222,12 @@ export async function POST(request: NextRequest) {
     }
 
     // Calculate due date if template provides default_due_days
-    let dueDate = body.due_date || null;
-    if (!dueDate && body.template_id) {
+    let dueDate = validatedData.due_date || null;
+    if (!dueDate && validatedData.template_id) {
       const { data: template } = await supabase
         .from('request_templates')
         .select('default_due_days')
-        .eq('id', body.template_id)
+        .eq('id', validatedData.template_id)
         .single();
       
       if (template?.default_due_days) {
@@ -221,20 +241,20 @@ export async function POST(request: NextRequest) {
     const baseRequestData = {
       organization_id: profile.organization_id,
       email_account_id: emailAccountId,
-      subject: body.subject,
-      message_body: body.message_body || null,
-      request_type: body.request_type || null,
+      subject: validatedData.subject,
+      message_body: validatedData.message_body || null,
+      request_type: validatedData.request_type || null,
       due_date: dueDate || null,
       status: 'pending' as const,
       created_by: user.id,
-      template_id: body.template_id || null,
-      reminder_months: body.reminder_months ?? 1,
-      repeat_interval_type: body.repeat_interval_type || null,
-      repeat_interval_value: body.repeat_interval_value || null,
-      send_immediately: body.send_immediately !== false, // Default to true
-      expected_document_count: body.expected_document_count || null,
-      required_document_types: body.required_document_types || null,
-      scheduled_send_at: body.scheduled_send_at || null,
+      template_id: validatedData.template_id || null,
+      reminder_months: validatedData.reminder_months ?? 1,
+      repeat_interval_type: validatedData.repeat_interval_type || null,
+      repeat_interval_value: validatedData.repeat_interval_value || null,
+      send_immediately: validatedData.send_immediately !== false, // Default to true
+      expected_document_count: validatedData.expected_document_count || null,
+      required_document_types: validatedData.required_document_types || null,
+      scheduled_send_at: validatedData.scheduled_send_at || null,
       status_changed_by: user.id, // Track who created it
     };
 
@@ -256,7 +276,7 @@ export async function POST(request: NextRequest) {
     const createdRequests = newRequests || [];
 
     // Send emails immediately if requested (and not scheduled)
-    if (body.send_immediately !== false && !body.scheduled_send_at && createdRequests.length > 0) {
+    if (validatedData.send_immediately !== false && !validatedData.scheduled_send_at && createdRequests.length > 0) {
       // Send emails for all created requests
       const emailResults = await Promise.allSettled(
         createdRequests.map((req) =>

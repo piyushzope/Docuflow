@@ -23,6 +23,20 @@ interface ValidationResult {
   dob_on_document?: string;
 }
 
+interface RequestContext {
+  requested_type?: string;
+  due_date?: string;
+  org_policy_thresholds?: {
+    min_owner_match_confidence?: number;
+    min_authenticity_score?: number;
+    min_request_compliance_score?: number;
+    allow_expired_documents?: boolean;
+  };
+}
+
+// Prompt version for tracking and rollback
+const PROMPT_VERSION = '1.1.0';
+
 interface OwnerMatchResult {
   matched_employee_id?: string;
   name_match_score: number;
@@ -464,20 +478,41 @@ function uint8ArrayToBase64(data: Uint8Array): string {
 }
 
 /**
- * Extract text from document using OCR (basic implementation)
- * For images, we'll use OpenAI Vision API
+ * Extract text from document using OCR
+ * For images, we'll use OpenAI Vision API (handled in classifyDocumentWithLLM)
  * For PDFs, we can try to extract text directly if it's a text-based PDF
+ * 
+ * Future: Integrate Google Vision API or Azure Computer Vision for scanned documents
  */
 async function extractTextFromDocument(
   fileData: Uint8Array,
-  mimeType: string
+  mimeType: string,
+  ocrEnabled: boolean = false
 ): Promise<string> {
-  console.log(`Extracting text from ${mimeType} (${fileData.length} bytes)`);
+  console.log(`Extracting text from ${mimeType} (${fileData.length} bytes, OCR: ${ocrEnabled})`);
   
   // For images, we'll use OpenAI Vision API in classifyDocumentWithLLM
-  // For PDFs, we can try to extract text directly if it's a text-based PDF
-  // For now, return empty string - OCR will be handled via Vision API for images
+  // No need to extract text separately for images when using vision API
   
+  // For PDFs, if OCR is enabled, we could extract text from native PDFs
+  // For scanned PDFs, would need external OCR service (Google Vision, Azure, etc.)
+  if (ocrEnabled && mimeType === 'application/pdf') {
+    // TODO: Implement PDF text extraction for native (non-scanned) PDFs
+    // For scanned PDFs, would need to:
+    // 1. Convert PDF pages to images
+    // 2. Call OCR service (Google Vision API, Azure Computer Vision, etc.)
+    // 3. Combine extracted text
+    // 
+    // Example future implementation:
+    // - Use pdf-parse or similar for native PDFs
+    // - Use Google Vision API or Azure Computer Vision for scanned PDFs
+    // - Cache results to avoid re-processing
+    
+    console.log('OCR enabled for PDF, but not yet implemented. Using filename/MIME type only.');
+  }
+  
+  // For now, return empty string - OCR will be handled via Vision API for images
+  // Text extraction for PDFs will be added in future enhancement
   return '';
 }
 
@@ -491,25 +526,66 @@ async function classifyDocumentWithLLM(
   filename: string,
   mimeType: string,
   openAiKey: string,
-  fileData?: Uint8Array
+  fileData?: Uint8Array,
+  requestContext?: RequestContext,
+  useEnhancedPrompt: boolean = false,
+  executionData?: { modelUsed?: string; tokenUsage?: any }
 ): Promise<ValidationResult> {
   const isImage = isImageFile(mimeType);
   
+  // Build context section if enhanced prompt is enabled and context is available
+  let contextSection = '';
+  if (useEnhancedPrompt && requestContext) {
+    const contextParts: string[] = [];
+    
+    if (requestContext.requested_type) {
+      contextParts.push(`- Requested document type: ${requestContext.requested_type}`);
+    }
+    
+    if (requestContext.due_date) {
+      contextParts.push(`- Due date: ${requestContext.due_date}`);
+    }
+    
+    if (requestContext.org_policy_thresholds) {
+      const thresholds = requestContext.org_policy_thresholds;
+      const thresholdParts: string[] = [];
+      if (thresholds.min_owner_match_confidence !== undefined) {
+        thresholdParts.push(`owner match >= ${thresholds.min_owner_match_confidence}`);
+      }
+      if (thresholds.min_authenticity_score !== undefined) {
+        thresholdParts.push(`authenticity >= ${thresholds.min_authenticity_score}`);
+      }
+      if (thresholds.min_request_compliance_score !== undefined) {
+        thresholdParts.push(`compliance >= ${thresholds.min_request_compliance_score}`);
+      }
+      if (thresholds.allow_expired_documents !== undefined) {
+        thresholdParts.push(`expired documents: ${thresholds.allow_expired_documents ? 'allowed' : 'not allowed'}`);
+      }
+      if (thresholdParts.length > 0) {
+        contextParts.push(`- Organization policy thresholds: ${thresholdParts.join(', ')}`);
+      }
+    }
+    
+    if (contextParts.length > 0) {
+      contextSection = `\n\nContext:\n${contextParts.join('\n')}\n`;
+    }
+  }
+  
   // Prepare the prompt
-  const prompt = `Analyze this document and extract the following information. Return ONLY valid JSON.
+  const prompt = `Analyze this document and extract the following information. Return ONLY valid JSON.${contextSection}
 
 Document filename: ${filename}
 Document type: ${mimeType}
 ${extractedText ? `Extracted text: ${extractedText.substring(0, 2000)}...` : ''}
 
-Extract and return JSON with these fields:
+Extract and return JSON with exactly these fields:
 {
   "document_type": "passport|drivers_license|id_card|birth_certificate|visa|other",
-  "issuing_country": "country code (e.g., USA, IND, GBR)",
-  "document_number": "document number if visible",
+  "issuing_country": "country code (e.g., USA, IND, GBR) or null",
+  "document_number": "document number if visible or null",
   "expiry_date": "YYYY-MM-DD or null",
   "issue_date": "YYYY-MM-DD or null",
-  "full_name_on_document": "full name as it appears on document",
+  "full_name_on_document": "full name as it appears on document or null",
   "dob_on_document": "YYYY-MM-DD or null"
 }
 
@@ -523,7 +599,7 @@ Return ONLY the JSON object, no other text.`;
     const messages: any[] = [
       {
         role: 'system',
-        content: 'You are a document analysis expert. Extract structured data from documents. Return only valid JSON.',
+        content: 'You are a document analysis expert. Extract structured data from documents. Return only valid JSON that matches the required schema.',
       },
     ];
 
@@ -549,7 +625,7 @@ Return ONLY the JSON object, no other text.`;
         ],
       });
       
-      console.log(`Using GPT-4o Vision API for image analysis (${fileData.length} bytes, ${mimeType})`);
+      console.log(`Using GPT-4o Vision API for image analysis (${fileData.length} bytes, ${mimeType}, prompt v${PROMPT_VERSION})`);
     } else {
       // For non-images, use text-only
       messages.push({
@@ -557,53 +633,120 @@ Return ONLY the JSON object, no other text.`;
         content: prompt,
       });
       
-      console.log(`Using ${model} for text-based analysis`);
+      console.log(`Using ${model} for text-based analysis (prompt v${PROMPT_VERSION})`);
     }
 
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openAiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: messages,
-        temperature: 0.1,
-        response_format: { type: 'json_object' },
-        max_tokens: isImage ? 1000 : 500, // Images may need more tokens for detailed analysis
-      }),
+    // Create AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+
+    try {
+      const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openAiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: messages,
+          temperature: 0.1,
+          response_format: { type: 'json_object' },
+          max_tokens: isImage ? 1000 : 500, // Images may need more tokens for detailed analysis
+        }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        const errorDetails = {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText.substring(0, 500), // Limit error message length
+        };
+        console.error('OpenAI API error:', errorDetails);
+        throw new Error(`OpenAI API error (${response.status}): ${errorText.substring(0, 200)}`);
+      }
+
+      const data = await response.json();
+      const content = data.choices[0]?.message?.content;
+      
+      // Track token usage and model for analytics
+      if (executionData && data.usage) {
+        executionData.tokenUsage = {
+          input_tokens: data.usage.prompt_tokens || 0,
+          output_tokens: data.usage.completion_tokens || 0,
+          total_tokens: data.usage.total_tokens || 0,
+        };
+      }
+      if (executionData) {
+        executionData.modelUsed = model;
+      }
+      
+      if (!content) {
+        throw new Error('No content from OpenAI response');
+      }
+
+      // Parse and validate JSON response
+      let parsedContent: any;
+      try {
+        parsedContent = JSON.parse(content);
+      } catch (parseError) {
+        console.error('Failed to parse OpenAI JSON response:', parseError);
+        throw new Error('Invalid JSON response from OpenAI');
+      }
+
+      // Validate and normalize the response structure
+      const result: ValidationResult = {
+        document_type: parsedContent.document_type || null,
+        issuing_country: parsedContent.issuing_country || null,
+        document_number: parsedContent.document_number || null,
+        expiry_date: parsedContent.expiry_date || null,
+        issue_date: parsedContent.issue_date || null,
+        full_name_on_document: parsedContent.full_name_on_document || null,
+        dob_on_document: parsedContent.dob_on_document || null,
+      };
+
+      // Validate document_type is one of the allowed values
+      const validTypes = ['passport', 'drivers_license', 'id_card', 'birth_certificate', 'visa', 'other'];
+      if (result.document_type && !validTypes.includes(result.document_type)) {
+        console.warn(`Invalid document_type from LLM: ${result.document_type}, defaulting to 'other'`);
+        result.document_type = 'other';
+      }
+      
+      // Add confidence score (higher for images analyzed with vision API)
+      const confidence = result.document_type 
+        ? (isImage ? 0.9 : 0.85) // Vision API is more accurate
+        : 0.5;
+      
+      return {
+        ...result,
+        document_type_confidence: confidence,
+      };
+    } catch (fetchError: any) {
+      clearTimeout(timeoutId);
+      
+      if (fetchError.name === 'AbortError') {
+        throw new Error('OpenAI API request timed out after 60 seconds');
+      }
+      throw fetchError;
+    }
+  } catch (error: any) {
+    console.error('LLM classification error:', {
+      error: error.message,
+      filename,
+      mimeType,
+      promptVersion: PROMPT_VERSION,
     });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenAI API error: ${error}`);
-    }
-
-    const data = await response.json();
-    const content = data.choices[0]?.message?.content;
     
-    if (!content) {
-      throw new Error('No content from OpenAI');
-    }
-
-    const result = JSON.parse(content) as ValidationResult;
-    
-    // Add confidence score (higher for images analyzed with vision API)
-    const confidence = result.document_type 
-      ? (isImage ? 0.9 : 0.85) // Vision API is more accurate
-      : 0.5;
-    
-    return {
-      ...result,
-      document_type_confidence: confidence,
-    };
-  } catch (error) {
-    console.error('LLM classification error:', error);
     // Fallback: try to infer from filename
+    const fallbackType = inferDocumentTypeFromFilename(filename);
     return {
-      document_type: inferDocumentTypeFromFilename(filename),
+      document_type: fallbackType,
       document_type_confidence: 0.6,
+      // All other fields remain undefined/null
     };
   }
 }
@@ -1060,14 +1203,16 @@ function validateFileFormat(fileData: Uint8Array, mimeType: string): boolean {
 }
 
 /**
- * Check document authenticity and quality (basic implementation)
+ * Check document authenticity and quality
+ * Includes content hash computation and duplicate detection
  */
 async function checkAuthenticity(
   supabase: any,
   documentId: string,
   organizationId: string,
   fileData: Uint8Array,
-  mimeType: string
+  mimeType: string,
+  useStrictMode: boolean = false
 ): Promise<AuthenticityCheck> {
   // Validate file format matches MIME type
   const formatValid = validateFileFormat(fileData, mimeType);
@@ -1088,27 +1233,56 @@ async function checkAuthenticity(
     }
   }
   
-  // Check for duplicates (by file hash)
-  const fileHash = await calculateFileHash(fileData);
+  // Compute content hash for duplicate detection
+  const contentHash = await calculateFileHash(fileData);
   
-  const { data: existingDocs } = await supabase
-    .from('documents')
-    .select('id')
-    .eq('organization_id', organizationId)
-    .neq('id', documentId);
-
+  // Store content hash in document (non-blocking, don't fail validation if this fails)
+  try {
+    await supabase
+      .from('documents')
+      .update({ content_hash: contentHash })
+      .eq('id', documentId);
+  } catch (error) {
+    console.warn('Failed to update content_hash:', error);
+    // Continue validation even if hash storage fails
+  }
+  
+  // Check for duplicates using content hash
   let duplicateOf: string | undefined;
   let isDuplicate = false;
-
-  // For now, simple duplicate check by size and filename
-  // In production, use content hash comparison
+  
+  try {
+    const { data: duplicates, error: dupError } = await supabase
+      .rpc('find_duplicate_documents', {
+        p_organization_id: organizationId,
+        p_content_hash: contentHash,
+        p_exclude_document_id: documentId,
+      });
+    
+    if (!dupError && duplicates && duplicates.length > 0) {
+      // Found duplicates - use the oldest one as the "original"
+      duplicateOf = duplicates[0].document_id;
+      isDuplicate = true;
+      
+      console.log(`Duplicate detected: document ${documentId} matches ${duplicates.length} existing document(s)`);
+    }
+  } catch (error) {
+    console.warn('Failed to check for duplicates:', error);
+    // Continue validation even if duplicate check fails
+  }
+  
+  // In strict mode, duplicates reduce authenticity score significantly
+  // In normal mode, they're just warnings
+  if (useStrictMode && isDuplicate) {
+    authenticityScore = Math.min(authenticityScore, 0.5); // Lower score for duplicates in strict mode
+  }
   
   return {
     authenticity_score: authenticityScore,
     pdf_valid: pdfValid,
     is_duplicate: isDuplicate,
     duplicate_of_document_id: duplicateOf,
-    requires_review: !formatValid || isDuplicate,
+    requires_review: (useStrictMode && !formatValid) || (useStrictMode && isDuplicate),
   };
 }
 
@@ -1315,6 +1489,16 @@ function determineValidationStatus(
   } else if (authenticity.authenticity_score < 0.85) {
     warnings.push('authenticity_score_low');
   }
+  
+  // Check for duplicates (warning only, unless in strict mode)
+  if (authenticity.is_duplicate) {
+    if (autoApprovalConfig?.allow_duplicates !== true) {
+      warnings.push('duplicate_document_detected');
+      if (authenticity.duplicate_of_document_id) {
+        warnings.push(`duplicate_of_document_${authenticity.duplicate_of_document_id}`);
+      }
+    }
+  }
 
   // Check request compliance
   if (!requestCompliance.matches_request_type) {
@@ -1367,8 +1551,14 @@ async function validateDocument(
   supabase: any,
   documentId: string,
   encryptionKey: string,
-  openAiKey: string
+  openAiKey: string,
+  triggeredBy: string = 'system',
+  triggeredByUserId?: string
 ): Promise<void> {
+  const startTime = Date.now();
+  let executionId: string | null = null;
+  const executionData: { modelUsed?: string; tokenUsage?: any } = {};
+  
   // Get document
   const { data: document, error: docError } = await supabase
     .from('documents')
@@ -1378,6 +1568,25 @@ async function validateDocument(
 
   if (docError || !document) {
     throw new Error(`Document not found: ${docError?.message}`);
+  }
+
+  // Create execution record
+  const { data: execution, error: execError } = await supabase
+    .from('validation_executions')
+    .insert({
+      document_id: documentId,
+      organization_id: document.organization_id,
+      status: 'running',
+      started_at: new Date().toISOString(),
+      triggered_by: triggeredBy,
+      triggered_by_user_id: triggeredByUserId || null,
+      prompt_version: PROMPT_VERSION,
+    })
+    .select('id')
+    .single();
+  
+  if (!execError && execution) {
+    executionId = execution.id;
   }
 
   // Update validation status to 'validating'
@@ -1390,9 +1599,56 @@ async function validateDocument(
     // Download document
     const fileData = await downloadDocumentFromStorage(supabase, document, encryptionKey);
 
+    // Get organization settings (for auto-approval config and feature flags)
+    const { data: org } = await supabase
+      .from('organizations')
+      .select('settings')
+      .eq('id', document.organization_id)
+      .single();
+
+    const orgSettings = org?.settings || {};
+    const autoApprovalConfig = orgSettings.auto_approval || {
+      min_owner_match_confidence: 0.90,
+      min_authenticity_score: 0.85,
+      min_request_compliance_score: 0.95,
+      allow_expired_documents: false,
+    };
+
+    // Check if enhanced prompt context is enabled (feature flag)
+    const useEnhancedPrompt = orgSettings.validation?.prompt_context?.enabled === true;
+
+    // Build request context if document is linked to a request
+    let requestContext: RequestContext | undefined;
+    if (document.document_request_id && document.document_requests) {
+      const docRequest = document.document_requests;
+      requestContext = {
+        requested_type: docRequest.request_type || undefined,
+        due_date: docRequest.due_date ? new Date(docRequest.due_date).toISOString().split('T')[0] : undefined,
+        org_policy_thresholds: {
+          min_owner_match_confidence: autoApprovalConfig.min_owner_match_confidence,
+          min_authenticity_score: autoApprovalConfig.min_authenticity_score,
+          min_request_compliance_score: autoApprovalConfig.min_request_compliance_score,
+          allow_expired_documents: autoApprovalConfig.allow_expired_documents,
+        },
+      };
+    } else if (useEnhancedPrompt) {
+      // Even without a linked request, include org policy thresholds if flag is enabled
+      requestContext = {
+        org_policy_thresholds: {
+          min_owner_match_confidence: autoApprovalConfig.min_owner_match_confidence,
+          min_authenticity_score: autoApprovalConfig.min_authenticity_score,
+          min_request_compliance_score: autoApprovalConfig.min_request_compliance_score,
+          allow_expired_documents: autoApprovalConfig.allow_expired_documents,
+        },
+      };
+    }
+
+    // Check if OCR is enabled (feature flag)
+    const ocrEnabled = orgSettings.validation?.ocr?.enabled === true;
+    
     // Extract text (basic - will be enhanced with OCR)
     // For images, we'll pass the file data to the LLM for vision analysis
-    const extractedText = await extractTextFromDocument(fileData, document.mime_type || '');
+    const extractedText = await extractTextFromDocument(fileData, document.mime_type || '', ocrEnabled);
 
     // Classify document using LLM
     // Pass fileData for images so GPT-4o Vision can analyze them
@@ -1401,7 +1657,10 @@ async function validateDocument(
       document.original_filename,
       document.mime_type || '',
       openAiKey,
-      isImageFile(document.mime_type || '') ? fileData : undefined
+      isImageFile(document.mime_type || '') ? fileData : undefined,
+      requestContext,
+      useEnhancedPrompt,
+      executionData
     );
 
     // Match owner identity
@@ -1419,13 +1678,15 @@ async function validateDocument(
       classification.issue_date
     );
 
-    // Check authenticity
+    // Check authenticity (with strict mode if enabled)
+    const useStrictAuthenticity = orgSettings.validation?.authenticity?.strict === true;
     const authenticity = await checkAuthenticity(
       supabase,
       documentId,
       document.organization_id,
       fileData,
-      document.mime_type || ''
+      document.mime_type || '',
+      useStrictAuthenticity
     );
 
     // Check request compliance
@@ -1434,20 +1695,6 @@ async function validateDocument(
       documentId,
       classification.document_type
     );
-
-    // Get auto-approval config
-    const { data: org } = await supabase
-      .from('organizations')
-      .select('settings')
-      .eq('id', document.organization_id)
-      .single();
-
-    const autoApprovalConfig = org?.settings?.auto_approval || {
-      min_owner_match_confidence: 0.90,
-      min_authenticity_score: 0.85,
-      min_request_compliance_score: 0.95,
-      allow_expired_documents: false,
-    };
 
     // Determine overall status
     const summary = determineValidationStatus(
@@ -1485,6 +1732,9 @@ async function validateDocument(
       requires_admin_review: summary.requires_admin_review,
       review_priority: summary.review_priority,
       validation_metadata: {
+        prompt_version: PROMPT_VERSION,
+        use_enhanced_prompt: useEnhancedPrompt,
+        request_context: requestContext,
         classification,
         owner_match: ownerMatch,
         expiry_analysis: expiryAnalysis,
@@ -1528,15 +1778,53 @@ async function validateDocument(
     }
 
     console.log(`✅ Validation completed for document ${documentId}: ${summary.overall_status}`);
-  } catch (error) {
+    
+    // Update execution record with success
+    const duration = Date.now() - startTime;
+    if (executionId) {
+      await supabase
+        .from('validation_executions')
+        .update({
+          status: 'completed',
+          finished_at: new Date().toISOString(),
+          duration_ms: duration,
+          model: executionData.modelUsed || null,
+          token_usage: executionData.tokenUsage || {},
+          validation_result_id: validationData.document_id, // Will be updated after insert
+        })
+        .eq('id', executionId);
+    }
+  } catch (error: any) {
     console.error(`❌ Validation failed for document ${documentId}:`, error);
+    
+    const duration = Date.now() - startTime;
+    const errorMessage = error?.message || 'Unknown error';
+    const isTimeout = errorMessage.includes('timeout') || errorMessage.includes('timed out');
+    
+    // Update execution record with failure
+    if (executionId) {
+      await supabase
+        .from('validation_executions')
+        .update({
+          status: isTimeout ? 'timeout' : 'failed',
+          finished_at: new Date().toISOString(),
+          duration_ms: duration,
+          error_summary: errorMessage.substring(0, 500),
+          error_details: {
+            error: errorMessage,
+            stack: error?.stack?.substring(0, 1000),
+            model: executionData.modelUsed || null,
+          },
+        })
+        .eq('id', executionId);
+    }
     
     // Update status to indicate error
     await supabase
       .from('documents')
       .update({ 
         validation_status: 'needs_review',
-        validation_metadata: { error: error.message },
+        validation_metadata: { error: errorMessage },
       })
       .eq('id', documentId);
     
@@ -1573,8 +1861,12 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
+    // Determine who triggered this (from request headers or query params)
+    const triggeredBy = req.headers.get('x-triggered-by') || 'system';
+    const triggeredByUserId = req.headers.get('x-triggered-by-user-id') || undefined;
+    
     // Run validation
-    await validateDocument(supabase, documentId, encryptionKey, openAiKey);
+    await validateDocument(supabase, documentId, encryptionKey, openAiKey, triggeredBy, triggeredByUserId);
 
     return new Response(
       JSON.stringify({ success: true, message: 'Document validated successfully' }),

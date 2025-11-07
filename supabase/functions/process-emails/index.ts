@@ -1709,19 +1709,46 @@ async function processEmail(
             const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
             const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
             
-            // Call validate-document edge function
-            const validationUrl = `${supabaseUrl}/functions/v1/validate-document`;
-            fetch(validationUrl, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${supabaseServiceKey}`,
-                'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({ documentId }),
-            }).catch((error) => {
-              // Log error but don't fail the email processing
-              console.warn(`⚠️ Failed to trigger validation for document ${documentId}:`, error);
-            });
+            // Check if validation queue is enabled for this organization
+            const { data: org } = await supabase
+              .from('organizations')
+              .select('settings')
+              .eq('id', organizationId)
+              .single();
+            
+            const useQueue = org?.settings?.validation?.queue?.enabled === true;
+            
+            if (useQueue) {
+              // Enqueue validation job instead of calling directly
+              const { error: enqueueError } = await supabase
+                .from('validation_jobs')
+                .insert({
+                  document_id: documentId,
+                  organization_id: organizationId,
+                  status: 'pending',
+                  next_run_at: new Date().toISOString(),
+                });
+              
+              if (enqueueError) {
+                console.warn(`⚠️ Failed to enqueue validation job for document ${documentId}:`, enqueueError);
+              } else {
+                console.log(`✅ Validation job enqueued for document ${documentId}`);
+              }
+            } else {
+              // Direct call (original behavior)
+              const validationUrl = `${supabaseUrl}/functions/v1/validate-document`;
+              fetch(validationUrl, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${supabaseServiceKey}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ documentId }),
+              }).catch((error) => {
+                // Log error but don't fail the email processing
+                console.warn(`⚠️ Failed to trigger validation for document ${documentId}:`, error);
+              });
+            }
             
             console.log(`🔍 Validation triggered for document ${documentId}`);
           } catch (validationError) {

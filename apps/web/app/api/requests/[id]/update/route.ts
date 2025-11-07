@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { updateRequestSchema, normalizeRequestType } from '@/lib/validation/request-schemas';
 
 export async function PATCH(
   request: NextRequest,
@@ -19,8 +20,28 @@ export async function PATCH(
     const resolvedParams = await Promise.resolve(params);
     const requestId = resolvedParams.id;
 
-    // Parse request body
+    // Parse and validate request body
     const body = await request.json();
+    
+    // Validate with Zod
+    const validationResult = updateRequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      return NextResponse.json(
+        { 
+          error: 'Validation failed', 
+          details: validationResult.error.errors 
+        },
+        { status: 400 }
+      );
+    }
+
+    const validatedData = validationResult.data;
+    
+    // Normalize request_type if provided
+    if (validatedData.request_type !== undefined && validatedData.request_type !== null) {
+      validatedData.request_type = normalizeRequestType(validatedData.request_type) || validatedData.request_type;
+    }
+
     const {
       recipient_email,
       subject,
@@ -28,7 +49,7 @@ export async function PATCH(
       request_type,
       due_date,
       status,
-    } = body;
+    } = validatedData;
 
     // Get user's organization
     const { data: profile } = await supabase
@@ -115,8 +136,13 @@ export async function PATCH(
     }
 
     // Update expected document count if provided
-    if (body.expected_document_count !== undefined) {
-      updateFields.expected_document_count = body.expected_document_count || null;
+    if (validatedData.expected_document_count !== undefined) {
+      updateFields.expected_document_count = validatedData.expected_document_count || null;
+    }
+
+    // Update required_document_types if provided
+    if (validatedData.required_document_types !== undefined) {
+      updateFields.required_document_types = validatedData.required_document_types || null;
     }
 
     // Perform the update
