@@ -35,11 +35,36 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // Allow public access to marketing site routes
+  const publicPaths = [
+    '/login',
+    '/signup',
+    '/auth',
+    '/features',
+    '/solutions',
+    '/pricing',
+    '/customers',
+    '/security',
+    '/integrations',
+    '/how-it-works',
+    '/resources',
+    '/about',
+    '/careers',
+    '/contact',
+    '/faq',
+    '/support',
+    '/legal',
+    '/changelog',
+    '/status',
+  ];
+
+  const isPublicPath = publicPaths.some(path => 
+    request.nextUrl.pathname === path || request.nextUrl.pathname.startsWith(path + '/')
+  );
+
   if (
     !user &&
-    !request.nextUrl.pathname.startsWith('/login') &&
-    !request.nextUrl.pathname.startsWith('/signup') &&
-    !request.nextUrl.pathname.startsWith('/auth') &&
+    !isPublicPath &&
     request.nextUrl.pathname !== '/'
   ) {
     // no user, potentially respond by redirecting the user to the login page

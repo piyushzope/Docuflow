@@ -13,6 +13,7 @@ import ScheduleSendPicker from '@/components/schedule-send-picker';
 import MultiRecipientPicker from '@/components/multi-recipient-picker';
 import RecipientHistory from '@/components/recipient-history';
 import DocumentRequirementsBuilder from '@/components/document-requirements-builder';
+import { normalizeRequestType } from '@/lib/validation/request-schemas';
 
 interface RequestTemplate {
   id: string;
@@ -191,20 +192,22 @@ export default function NewRequestPage() {
         return;
       }
 
-      // Prepare request data
+      // Prepare request data - normalize empty strings to null for optional fields
       const requestData = {
         recipients: formData.recipients.map((r) => r.email),
         subject: formData.subject,
-        message_body: formData.message_body || null,
-        request_type: formData.request_type || null,
-        due_date: formData.due_date || null,
-        template_id: formData.template_id || null,
+        message_body: formData.message_body?.trim() || null,
+        request_type: formData.request_type?.trim() 
+          ? normalizeRequestType(formData.request_type.trim()) 
+          : null,
+        due_date: formData.due_date?.trim() || null,
+        template_id: formData.template_id?.trim() || null,
         reminder_months: formData.reminder_months,
         repeat_interval_type: formData.repeat_enabled ? formData.repeat_interval_type : null,
         repeat_interval_value: formData.repeat_enabled ? formData.repeat_interval_value : null,
         send_immediately: formData.send_immediately,
-        scheduled_send_at: formData.scheduled_send_at,
-        email_account_id: formData.email_account_id,
+        scheduled_send_at: formData.scheduled_send_at?.trim() || null,
+        email_account_id: formData.email_account_id?.trim() || null,
         expected_document_count: formData.expected_document_count,
         required_document_types:
           formData.required_document_types.length > 0
@@ -235,8 +238,18 @@ export default function NewRequestPage() {
 
       if (!response.ok) {
         const errorMsg = result.error || 'Failed to create request';
-        // Handle specific error cases
-        if (result.details) {
+        // Handle validation errors with detailed messages
+        if (result.details && Array.isArray(result.details)) {
+          // Format Zod validation errors into readable messages
+          const validationErrors = result.details
+            .map((err: any) => {
+              const field = err.path?.join('.') || 'field';
+              const message = err.message || 'Invalid value';
+              return `${field}: ${message}`;
+            })
+            .join('; ');
+          throw new Error(`${errorMsg}: ${validationErrors}`);
+        } else if (result.details) {
           throw new Error(`${errorMsg}: ${result.details}`);
         }
         throw new Error(errorMsg);

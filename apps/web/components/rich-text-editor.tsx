@@ -196,14 +196,21 @@ export default function RichTextEditor({
     }
   };
 
-  const getCharacterCount = () => {
-    // Get plain text length (without HTML tags)
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = value || '';
-    return tempDiv.textContent?.length || 0;
-  };
+  const [characterCount, setCharacterCount] = useState(0);
 
-  const characterCount = getCharacterCount();
+  // Calculate character count only on client side
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      // Get plain text length (without HTML tags)
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = value || '';
+      setCharacterCount(tempDiv.textContent?.length || 0);
+    } else {
+      // Fallback for SSR: estimate from value length (will be updated on client)
+      setCharacterCount(value?.length || 0);
+    }
+  }, [value]);
+
   const displayValue = value || '';
 
   const ToolbarButton = ({
