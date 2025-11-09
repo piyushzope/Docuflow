@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { format, addMinutes, isPast, isFuture } from 'date-fns';
 
 interface ScheduleSendPickerProps {
@@ -25,9 +25,28 @@ export default function ScheduleSendPicker({
     scheduledSendAt ? format(new Date(scheduledSendAt), 'HH:mm') : ''
   );
 
+  // Sync internal state with prop changes
+  useEffect(() => {
+    if (scheduledSendAt) {
+      try {
+        const date = new Date(scheduledSendAt);
+        setDateInput(format(date, 'yyyy-MM-dd'));
+        setTimeInput(format(date, 'HH:mm'));
+      } catch {
+        setDateInput('');
+        setTimeInput('');
+      }
+    } else {
+      setDateInput('');
+      setTimeInput('');
+    }
+  }, [scheduledSendAt]);
+
   const handleToggle = (immediate: boolean) => {
+    // Always update the state
     onSendImmediatelyChange(immediate);
     if (immediate) {
+      // Clear scheduled date when switching to immediate
       onScheduledSendAtChange(null);
       setDateInput('');
       setTimeInput('');
@@ -94,9 +113,10 @@ export default function ScheduleSendPicker({
             type="radio"
             id="send_immediately"
             name="send_option"
+            value="immediate"
             checked={sendImmediately}
             onChange={() => handleToggle(true)}
-            className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+            className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
           />
           <label
             htmlFor="send_immediately"
@@ -112,9 +132,10 @@ export default function ScheduleSendPicker({
             type="radio"
             id="schedule_send"
             name="send_option"
+            value="scheduled"
             checked={!sendImmediately}
             onChange={() => handleToggle(false)}
-            className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500 mt-0.5"
+            className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500 mt-0.5 cursor-pointer"
           />
           <div className="ml-2 flex-1">
             <label
@@ -141,6 +162,7 @@ export default function ScheduleSendPicker({
                       min={format(now, 'yyyy-MM-dd')}
                       className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       required={!sendImmediately}
+                      disabled={sendImmediately}
                     />
                   </div>
                   <div>
@@ -157,6 +179,7 @@ export default function ScheduleSendPicker({
                       onChange={(e) => handleDateTimeChange(dateInput, e.target.value)}
                       className="block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                       required={!sendImmediately}
+                      disabled={sendImmediately}
                     />
                   </div>
                 </div>
