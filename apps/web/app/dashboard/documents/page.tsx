@@ -27,97 +27,109 @@ export default async function DocumentsPage() {
     redirect('/dashboard/setup');
   }
 
+  const organizationId = profile.organization_id;
+
+  // Diagnostic logging (server-side only, visible in terminal/logs)
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[Documents Page] Diagnostic Info:', {
+      userId: user.id,
+      organizationId,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   // Fetch all documents for the organization
-  // Try with joins first, but fall back to query without joins if it fails
-  // This handles cases where RLS on joined tables might block access
+  // Use a simpler approach: query documents first, then fetch related data separately
+  // This avoids RLS issues with joins that might filter out documents
   let documents: any[] | null = null;
   let queryError: any = null;
   let showWarning = false;
 
-  // First attempt: query with foreign key joins
-  const { data: documentsWithJoins, error: joinsError } = await supabase
+  // Step 1: Fetch documents without joins (most reliable)
+  // RLS policy will automatically filter by organization_id via get_user_organization_id()
+  // We also add explicit filter for clarity and as a safety measure
+  const { data: allDocuments, error: documentsError, count: totalCount } = await supabase
     .from('documents')
-    .select(`
-      *,
-      document_requests:document_request_id (
-        id,
-        subject,
-        recipient_email,
-        status
-      ),
-      routing_rules:routing_rule_id (
-        id,
-        name
-      )
-    `)
-    .eq('organization_id', profile.organization_id)
+    .select('*', { count: 'exact' })
+    .eq('organization_id', organizationId)
     .order('created_at', { ascending: false })
     .limit(100);
 
-  // Also fetch count without joins to detect if joins are filtering out documents
-  const { count: totalCount } = await supabase
-    .from('documents')
-    .select('*', { count: 'exact', head: true })
-    .eq('organization_id', profile.organization_id);
-
-  if (joinsError) {
-    console.error('Error fetching documents with joins:', joinsError);
-    queryError = joinsError;
-
-    // Fallback: query without joins if the join query fails
-    // This can happen if RLS policies on joined tables block access
-    const { data: documentsWithoutJoins, error: noJoinsError } = await supabase
-      .from('documents')
-      .select('*')
-      .eq('organization_id', profile.organization_id)
-      .order('created_at', { ascending: false })
-      .limit(100);
-
-    if (noJoinsError) {
-      console.error('Error fetching documents without joins:', noJoinsError);
-      queryError = noJoinsError;
-    } else {
-      // Use documents without joins and manually fetch related data if needed
-      documents = documentsWithoutJoins;
-      showWarning = true;
-      console.warn('Fetched documents without joins due to join query error. Some related data may be missing.');
-    }
+  if (documentsError) {
+    console.error('[Documents Page] Error fetching documents:', {
+      error: documentsError,
+      organizationId,
+      userId: user.id,
+    });
+    queryError = documentsError;
+    documents = [];
   } else {
-    documents = documentsWithJoins;
-    
-    // Check if joins are filtering out documents
-    // If we have fewer documents with joins than the total count, some are being filtered
-    if (totalCount !== null && documents && documents.length < totalCount) {
-      console.warn(`Join query returned ${documents.length} documents but ${totalCount} exist. Some documents may be filtered by RLS on joined tables.`);
-      showWarning = true;
-      
-      // Fetch all documents without joins to ensure we show all of them
-      const { data: allDocuments, error: allDocsError } = await supabase
-        .from('documents')
-        .select('*')
-        .eq('organization_id', profile.organization_id)
-        .order('created_at', { ascending: false })
-        .limit(100);
+    documents = allDocuments || [];
 
-      if (!allDocsError && allDocuments && allDocuments.length > documents.length) {
-        // Merge the documents, preferring the ones with joins for related data
-        const withJoinsMap = new Map(documents.map((d: any) => [d.id, d]));
-        const allDocsMap = new Map(allDocuments.map((d: any) => [d.id, d]));
-        
-        // Start with documents that have joins (they have related data)
-        const merged: any[] = [...documents];
-        
-        // Add documents that don't have joins
-        allDocuments.forEach((doc: any) => {
-          if (!withJoinsMap.has(doc.id)) {
-            merged.push(doc);
-          }
-        });
-        
-        // Sort by created_at descending
-        merged.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-        documents = merged.slice(0, 100);
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[Documents Page] Query Results:', {
+        documentCount: documents.length,
+        totalCount,
+        organizationId,
+      });
+    }
+
+    // Step 2: Fetch related data separately to avoid RLS join issues
+    if (documents.length > 0) {
+      // Get unique document_request_ids and routing_rule_ids
+      const documentRequestIds = documents
+        .map((d) => d.document_request_id)
+        .filter((id): id is string => id !== null);
+      const routingRuleIds = documents
+        .map((d) => d.routing_rule_id)
+        .filter((id): id is string => id !== null);
+
+      // Fetch document requests
+      const requestsMap = new Map();
+      if (documentRequestIds.length > 0) {
+        const { data: requests, error: requestsError } = await supabase
+          .from('document_requests')
+          .select('id, subject, recipient_email, status')
+          .in('id', documentRequestIds);
+
+        if (requestsError) {
+          console.warn('[Documents Page] Error fetching document requests:', requestsError);
+          showWarning = true;
+        } else {
+          requests?.forEach((req) => {
+            requestsMap.set(req.id, req);
+          });
+        }
       }
+
+      // Fetch routing rules
+      const rulesMap = new Map();
+      if (routingRuleIds.length > 0) {
+        const { data: rules, error: rulesError } = await supabase
+          .from('routing_rules')
+          .select('id, name')
+          .in('id', routingRuleIds);
+
+        if (rulesError) {
+          console.warn('[Documents Page] Error fetching routing rules:', rulesError);
+          showWarning = true;
+        } else {
+          rules?.forEach((rule) => {
+            rulesMap.set(rule.id, rule);
+          });
+        }
+      }
+
+      // Attach related data to documents
+      documents = documents.map((doc) => ({
+        ...doc,
+        document_requests: doc.document_request_id
+          ? requestsMap.get(doc.document_request_id) || null
+          : null,
+        routing_rules: doc.routing_rule_id
+          ? rulesMap.get(doc.routing_rule_id) || null
+          : null,
+      }));
     }
   }
 
