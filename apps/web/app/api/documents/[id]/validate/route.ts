@@ -67,6 +67,36 @@ export async function POST(
       .update({ validation_status: 'validating' })
       .eq('id', documentId);
 
+    // Check rate limit (simple in-memory check - in production, use Redis or DB)
+    // For now, we'll implement a basic check using a database table
+    const rateLimitWindow = 60; // 60 seconds
+    const maxRequests = 10; // Max 10 requests per window
+    
+    const { data: org } = await supabase
+      .from('organizations')
+      .select('settings')
+      .eq('id', profile.organization_id)
+      .single();
+    
+    const rateLimitConfig = org?.settings?.validation?.rate_limit || {};
+    const windowSeconds = rateLimitConfig.windowSeconds || rateLimitWindow;
+    const maxRequestsPerWindow = rateLimitConfig.maxRequests || maxRequests;
+    
+    // Check recent validation requests from this user
+    const windowStart = new Date(Date.now() - windowSeconds * 1000);
+    const { count: recentCount } = await supabase
+      .from('validation_executions')
+      .select('*', { count: 'exact', head: true })
+      .eq('organization_id', profile.organization_id)
+      .eq('triggered_by_user_id', user.id)
+      .gte('started_at', windowStart.toISOString());
+    
+    if (recentCount && recentCount >= maxRequestsPerWindow) {
+      return createInternalErrorResponse(
+        `Rate limit exceeded. Maximum ${maxRequestsPerWindow} validations per ${windowSeconds} seconds. Please try again later.`
+      );
+    }
+
     // Trigger validation edge function asynchronously
     const validationUrl = `${supabaseUrl}/functions/v1/validate-document`;
     
@@ -76,6 +106,8 @@ export async function POST(
         headers: {
           'Authorization': `Bearer ${supabaseServiceKey}`,
           'Content-Type': 'application/json',
+          'x-triggered-by': 'manual',
+          'x-triggered-by-user-id': user.id,
         },
         body: JSON.stringify({ documentId }),
       });
